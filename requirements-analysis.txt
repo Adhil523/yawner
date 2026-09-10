@@ -1,0 +1,4 @@
+# Dev PC analysis pipeline. Also needs ffmpeg + ffprobe on PATH (macOS: brew install ffmpeg).
+numpy==2.5.3
+opencv-python==5.0.0.93
+pytest==9.1.1
