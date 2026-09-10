@@ -1,5 +1,5 @@
-"""Run the Phase 0 analysis end to end on one source clip:
-probe -> normalize -> segment -> report.
+"""Run the whole offline analysis on one source clip:
+probe -> normalize -> segment -> export -> preview -> report.
 
     python -m analysis.pipeline assets/raw/<clip>.mp4
 
@@ -10,7 +10,7 @@ import argparse
 import logging
 import sys
 
-from analysis import config, normalize, probe, report, segment
+from analysis import config, export, normalize, preview, probe, report, segment
 from analysis.cli import existing_file, setup_logging
 from analysis.video_io import VideoToolError
 
@@ -29,9 +29,12 @@ def main() -> None:
     try:
         probe.run([args.source])
         normalized = normalize.run(args.source, args.width, args.height, args.fps)
-        # A stale segments.json from an earlier clip would otherwise end up in the report.
-        config.SEGMENTS_JSON.unlink(missing_ok=True)
+        # Results from an earlier clip would otherwise end up in the report.
+        for stale in (config.SEGMENTS_JSON, config.MANIFEST_JSON, config.PREVIEW_JSON):
+            stale.unlink(missing_ok=True)
         segment.run(normalized)
+        export.run(normalized)
+        preview.run()
     except (ValueError, VideoToolError) as error:
         log.error("%s", error)
         report.run()

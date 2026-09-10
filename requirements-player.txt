@@ -1,0 +1,4 @@
+# Player (PC now, Pi later). Also needs ffmpeg on PATH to decode the clips at startup.
+# On the Pi, prefer the apt packages (python3-numpy, python3-pygame) in a --system-site-packages venv.
+numpy==2.5.3
+pygame==2.6.1

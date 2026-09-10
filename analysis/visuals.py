@@ -28,7 +28,7 @@ def save_png(path: Path, image: np.ndarray) -> None:
         raise OSError(f"could not write {path}")
 
 
-def _label(image: np.ndarray, text: str, origin: tuple[int, int], scale: float = 0.45) -> None:
+def label(image: np.ndarray, text: str, origin: tuple[int, int], scale: float = 0.45) -> None:
     (width, height), baseline = cv2.getTextSize(text, FONT, scale, 1)
     x, y = origin
     cv2.rectangle(image, (x, y), (x + width + 6, y + height + baseline + 4), (0, 0, 0), thickness=-1)
@@ -46,14 +46,25 @@ def contact_sheet(tiles: np.ndarray, labels: list[str], bar_colors: list[BGR], c
         (PADDING + rows * (cell_height + PADDING), PADDING + columns * (tile_width + PADDING), 3),
         BACKGROUND, dtype=np.uint8,
     )
-    for index, (tile, label, color) in enumerate(zip(tiles, labels, bar_colors)):
+    for index, (tile, text, color) in enumerate(zip(tiles, labels, bar_colors)):
         row, column = divmod(index, columns)
         y = PADDING + row * (cell_height + PADDING)
         x = PADDING + column * (tile_width + PADDING)
         sheet[y:y + tile_height, x:x + tile_width] = tile
         sheet[y + tile_height:y + cell_height, x:x + tile_width] = color
-        _label(sheet, label, (x + 2, y + 2))
+        label(sheet, text, (x + 2, y + 2))
     return sheet
+
+
+def stack_vertical(images: list[np.ndarray]) -> np.ndarray:
+    """Stack images top to bottom, padding narrower ones on the right."""
+    width = max(image.shape[1] for image in images)
+    padded = [
+        np.hstack([image, np.full((image.shape[0], width - image.shape[1], 3), BACKGROUND, dtype=np.uint8)])
+        if image.shape[1] < width else image
+        for image in images
+    ]
+    return np.vstack(padded)
 
 
 def difference_strip(first: np.ndarray, second: np.ndarray, gain: float, labels: tuple[str, str, str]) -> np.ndarray:
@@ -62,7 +73,7 @@ def difference_strip(first: np.ndarray, second: np.ndarray, gain: float, labels:
     amplified = np.clip(difference.astype(np.float32) * gain, 0, 255).astype(np.uint8)
     strip = np.hstack([first, second, cv2.cvtColor(amplified, cv2.COLOR_GRAY2BGR)])
     for index, text in enumerate(labels):
-        _label(strip, text, (index * first.shape[1] + 4, 4))
+        label(strip, text, (index * first.shape[1] + 4, 4))
     return strip
 
 

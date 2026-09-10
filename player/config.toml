@@ -1,0 +1,15 @@
+# Yawn Kiosk player settings (brief section 6). Times in seconds unless noted.
+# The yawn always plays to the end, even if the person leaves (finish_yawn_if_left is not optional).
+
+manifest = "../build/manifest.json"  # relative to this file
+
+[sensor]
+gpio_pin = 17           # BCM pin, used once the real sensor is wired (Phase 1)
+presence_on_ms = 200    # raw signal high this long -> present
+absence_off_s = 5.0     # raw signal low this long -> absent
+
+[behaviour]
+yawn_on_arrival = true      # one yawn per arrival
+repeat_while_present = false
+repeat_interval_s = 20.0    # only used if repeat_while_present
+cooldown_s = 5.0            # after someone leaves, before a new arrival can trigger

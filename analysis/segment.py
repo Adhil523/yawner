@@ -92,6 +92,7 @@ def detect_segments(
     edge_fraction: float = config.EDGE_FRACTION,
     smooth_window: int = config.ENERGY_SMOOTH_WINDOW,
     onset_fraction: float = config.ONSET_FRACTION,
+    allow_edge_motion: bool = False,
 ) -> Segments:
     """The yawn spans from the first to the last frame whose smoothed motion is above threshold.
 
@@ -113,9 +114,9 @@ def detect_segments(
     threshold = still_level + onset_fraction * (peak - still_level)
     moving = np.flatnonzero(smoothed > threshold)
     onset, offset = int(moving[0]), int(moving[-1])
-    if onset == 0:
+    if onset == 0 and not allow_edge_motion:
         raise SegmentationError("clip starts in motion; it must begin with the man standing still")
-    if offset == count - 1:
+    if offset == count - 1 and not allow_edge_motion:
         raise SegmentationError("clip ends in motion; it must end with the man standing still")
     return Segments(count, onset, offset, still_level, threshold)
 
@@ -245,8 +246,8 @@ def run(clip: Path, json_out: Path = config.SEGMENTS_JSON) -> dict[str, Any]:
     info = probe_video(clip)
     descriptors = load_descriptors(clip)
     energy = motion_energy(descriptors)
-    detected = detect_segments(energy)
     overrides = config.SEGMENT_OVERRIDES.get(clip.stem, {})
+    detected = detect_segments(energy, allow_edge_motion=bool(overrides))
     segments = apply_overrides(detected, **overrides)
     distances = pairwise_distance(descriptors, descriptors)
     drift = natural_drift(distances, [segments.head, segments.tail], config.DRIFT_GAPS)

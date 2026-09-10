@@ -1,0 +1,161 @@
+"""Yawn kiosk player: the idle loop, yawning when someone arrives.
+
+    python -m player.main [--windowed] [--hud] [--config player/config.toml]
+
+On the PC the keyboard is the sensor: hold SPACE while someone is "present",
+or press T to toggle presence. Q or Esc quits.
+"""
+
+import argparse
+import logging
+import sys
+import time
+from dataclasses import replace
+from pathlib import Path
+
+import pygame
+
+from player.frames import load_manifest, load_sequences
+from player.sensor import Debouncer, KeyboardSensor
+from player.settings import DEFAULT_CONFIG, Settings, load_settings
+from player.state_machine import Graph, YawnStateMachine
+
+log = logging.getLogger("player")
+
+WINDOW_SCREEN_FRACTION = 0.9
+QUIT_KEYS = {"q", "escape"}
+BLACK = (0, 0, 0)
+HUD_TEXT = (255, 255, 255)
+HUD_BACKGROUND = (0, 0, 0, 160)
+
+
+def fit(video: tuple[int, int], box: tuple[int, int]) -> tuple[int, int]:
+    """Largest even size with the video's aspect ratio that fits inside `box`."""
+    scale = min(box[0] / video[0], box[1] / video[1])
+    return int(video[0] * scale) // 2 * 2, int(video[1] * scale) // 2 * 2
+
+
+def open_display(video: tuple[int, int], windowed: bool) -> tuple[pygame.Surface, tuple[int, int], tuple[int, int]]:
+    """Returns (screen, video size on screen, top-left offset of the video)."""
+    if windowed:
+        desktop = pygame.display.get_desktop_sizes()[0]
+        box = (int(desktop[0] * WINDOW_SCREEN_FRACTION), int(desktop[1] * WINDOW_SCREEN_FRACTION))
+        size = fit(video, box)
+        return pygame.display.set_mode(size), size, (0, 0)
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    pygame.mouse.set_visible(False)
+    size = fit(video, screen.get_size())
+    offset = ((screen.get_width() - size[0]) // 2, (screen.get_height() - size[1]) // 2)
+    return screen, size, offset
+
+
+def _sleep_until(deadline: float) -> None:
+    remaining = deadline - time.perf_counter()
+    if remaining > 0.002:
+        time.sleep(remaining - 0.001)
+    while time.perf_counter() < deadline:
+        pass
+
+
+def _draw_hud(screen: pygame.Surface, font: pygame.font.Font, text: str, offset: tuple[int, int]) -> None:
+    rendered = font.render(text, True, HUD_TEXT)
+    backing = pygame.Surface((rendered.get_width() + 12, rendered.get_height() + 8), pygame.SRCALPHA)
+    backing.fill(HUD_BACKGROUND)
+    screen.blit(backing, (offset[0] + 8, offset[1] + 8))
+    screen.blit(rendered, (offset[0] + 14, offset[1] + 12))
+
+
+def _advance(machine: YawnStateMachine, present: bool, now: float) -> None:
+    before = machine.phase
+    machine.advance(present, now)
+    jump = machine.last_jump
+    if jump is not None and jump.bridge != "bridge_loop":
+        via = f"crossfade {jump.bridge}" if jump.bridge else "no cut"
+        log.info("jump %d -> %d (%s)", jump.at, jump.resume, via)
+    if machine.phase is not before:
+        log.info("%s -> %s", before.value, machine.phase.value)
+
+
+def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool) -> None:
+    manifest = load_manifest(settings.manifest)
+    graph = Graph.from_manifest(manifest)
+    fps = float(manifest["fps"])
+
+    pygame.init()
+    pygame.display.set_caption("Yawn Kiosk")
+    screen, size, offset = open_display((manifest["resolution"][0], manifest["resolution"][1]), windowed)
+    screen.fill(BLACK)
+    started = time.perf_counter()
+    sequences = load_sequences(manifest, settings.manifest.parent, size)
+    if fast_input:
+        sensor_settings = replace(settings.sensor, absence_off_s=0.2)
+        behaviour = replace(settings.behaviour, cooldown_s=0.0)
+        log.info("fast input enabled: arrivals can be repeated after 0.2 s away")
+    else:
+        sensor_settings = settings.sensor
+        behaviour = settings.behaviour
+    log.info("ready in %.1f s; hold SPACE (or press T) for 'someone present', Q to quit", time.perf_counter() - started)
+
+    font = pygame.font.Font(None, 30) if hud else None
+    sensor = KeyboardSensor()
+    debouncer = Debouncer(sensor_settings.presence_on_s, sensor_settings.absence_off_s)
+    machine = YawnStateMachine(graph, behaviour)
+    period = 1.0 / fps
+    deadline = time.perf_counter()
+    present = False
+    dropped = 0
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return
+            if event.type in (pygame.KEYDOWN, pygame.KEYUP):
+                key = pygame.key.name(event.key)
+                if event.type == pygame.KEYDOWN and key in QUIT_KEYS:
+                    return
+                sensor.handle_key(key, event.type == pygame.KEYDOWN)
+
+        now = time.perf_counter()
+        was_present, present = present, debouncer.update(sensor.raw(now), now)
+        if present != was_present:
+            log.info("presence: %s", "someone there" if present else "nobody")
+
+        name, index = machine.current
+        screen.blit(sequences[name][index], offset)
+        if font is not None:
+            status = f"{machine.phase.value}  {name}:{index}  present={'yes' if present else 'no'}"
+            _draw_hud(screen, font, status + ("  armed" if machine.armed else ""), offset)
+        pygame.display.flip()
+
+        _advance(machine, present, now)
+        deadline += period
+        late = time.perf_counter() - deadline
+        if late > period:  # more than a frame behind: skip ahead rather than drift
+            missed = int(late // period)
+            for _ in range(missed):
+                _advance(machine, present, now)
+            deadline += missed * period
+            dropped += missed
+            log.warning("behind schedule, skipped %d frame(s) (%d total)", missed, dropped)
+        _sleep_until(deadline)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--windowed", action="store_true", help="run in a window instead of fullscreen")
+    parser.add_argument("--hud", action="store_true", help="show state, frame and presence in the corner")
+    parser.add_argument("--fast-input", action="store_true", help="shorten PC absence debounce and cooldown for repeated tests")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="[%(name)s]: %(message)s")
+    try:
+        run(load_settings(args.config), args.windowed, args.hud, args.fast_input)
+    except (ValueError, FileNotFoundError, RuntimeError) as error:
+        log.error("%s", error)
+        sys.exit(1)
+    finally:
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    main()
