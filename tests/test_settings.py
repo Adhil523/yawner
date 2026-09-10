@@ -8,6 +8,8 @@ from player.settings import load_settings
 def test_default_config_loads() -> None:
     settings = load_settings()
     assert settings.sensor.presence_on_s == pytest.approx(0.2)
+    assert settings.behaviour.repeat_while_present is True
+    assert settings.behaviour.repeat_interval_s == 5.0
     assert settings.behaviour.cooldown_s == 5.0
     assert settings.manifest.name == "manifest.json"
 

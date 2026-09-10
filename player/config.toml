@@ -10,6 +10,6 @@ absence_off_s = 5.0     # raw signal low this long -> absent
 
 [behaviour]
 yawn_on_arrival = true      # one yawn per arrival
-repeat_while_present = false
-repeat_interval_s = 20.0    # only used if repeat_while_present
+repeat_while_present = true  # repeat while someone remains present
+repeat_interval_s = 5.0      # minimum seconds between yawn triggers
 cooldown_s = 5.0            # after someone leaves, before a new arrival can trigger
