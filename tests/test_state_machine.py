@@ -97,6 +97,20 @@ def test_arrival_after_cooldown_yawns_again() -> None:
     assert len(_entries_taken(shown)) == 2
 
 
+def test_arrival_during_a_yawn_is_ignored() -> None:
+    machine = YawnStateMachine(_loop_in_still_end(), Behaviour(cooldown_s=0.0))
+    # First person triggers and leaves; a second arrives mid-yawn (ticks 10-29) and stays.
+    shown = _play(machine, round(6 * FPS), present=lambda now: now < 0.2 or now >= 0.8)
+    assert shown[round(0.8 * FPS)][1] is Phase.YAWNING
+    assert len(_entries_taken(shown)) == 1
+
+
+def test_arrival_while_idle_still_yawns_with_no_cooldown() -> None:
+    machine = YawnStateMachine(_loop_in_still_end(), Behaviour(cooldown_s=0.0))
+    shown = _play(machine, round(8 * FPS), present=lambda now: now < 0.2 or now >= 3.0)
+    assert len(_entries_taken(shown)) == 2
+
+
 def test_repeat_while_present_rearms_after_interval() -> None:
     machine = YawnStateMachine(_loop_in_still_end(), Behaviour(repeat_while_present=True, repeat_interval_s=3.0))
     starts = [tick / FPS for tick in _entries_taken(_play(machine, round(10 * FPS), present=lambda now: True))]

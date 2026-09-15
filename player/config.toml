@@ -4,12 +4,20 @@
 manifest = "../build/manifest.json"  # relative to this file
 
 [sensor]
-gpio_pin = 17           # BCM pin, used once the real sensor is wired (Phase 1)
 presence_on_ms = 200    # raw signal high this long -> present
 absence_off_s = 5.0     # raw signal low this long -> absent
+
+# Waveshare HMMD mmWave over UART (--sensor hmmd). Wiring: docs/wiring.md
+serial_device = "auto"  # auto = /dev/ttyAMA0 on a Pi 5, /dev/serial0 on other Pis
+baud = 115200
+min_cm = 50             # someone counts once present between min_cm and max_cm...
+max_cm = 200
+rearm_cm = 260          # ...and stops counting once gone or at least this far away
+
+gpio_pin = 17           # --sensor gpio only: BCM pin for a plain on/off sensor output (e.g. HMMD OT2)
 
 [behaviour]
 yawn_on_arrival = true      # one yawn per arrival
 repeat_while_present = true  # repeat while someone remains present
 repeat_interval_s = 5.0      # minimum seconds between yawn triggers
-cooldown_s = 5.0            # after someone leaves, before a new arrival can trigger
+cooldown_s = 5.0            # after someone leaves, before a new arrival can trigger (arrivals mid-yawn never count)

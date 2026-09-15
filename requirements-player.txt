@@ -1,4 +1,5 @@
-# Player (PC now, Pi later). Also needs ffmpeg on PATH to decode the clips at startup.
-# On the Pi, prefer the apt packages (python3-numpy, python3-pygame) in a --system-site-packages venv.
-numpy==2.5.3
+# Player on the PC. Also needs ffmpeg on PATH to decode the clips at startup.
+# On the Pi, don't pip install: deploy/run-pi.sh installs the apt packages (python3-pygame, python3-serial, ffmpeg).
 pygame==2.6.1
+pyserial==3.5     # HMMD sensor over UART; on the Pi use apt python3-serial
+gpiozero==2.0.1  # real pins on the Pi also need python3-lgpio from apt; on the PC it is only used with mock pins in tests

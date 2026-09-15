@@ -6,7 +6,7 @@ A fullscreen video of a man standing idle, who yawns when someone walks up to a 
 - [docs/setup.md](docs/setup.md): hardware answers and decisions so far.
 - [docs/analysis-report.md](docs/analysis-report.md): latest analysis results (generated).
 
-**Status:** Analysis pipeline (Phase 2) and PC player (Phase 3) are built and approved. Next: sensor wiring (Phase 1, deferred until hardware arrives) and Pi deployment (Phase 4). Everything currently runs on the dev PC with a keyboard-simulated sensor.
+**Status:** Analysis pipeline (Phase 2) and PC player (Phase 3) are built and approved. In progress: sensor bring-up (Phase 1) on a Pi 5 with a Waveshare HMMD mmWave sensor over UART ([docs/wiring.md](docs/wiring.md)). Then Pi deployment (Phase 4).
 
 ## Setup (dev PC)
 
@@ -57,8 +57,8 @@ Hold `SPACE` or press `T` to simulate someone arriving. Press `Q` or `Esc` to qu
 |---|---|
 | `--windowed` | Run in a window instead of fullscreen. |
 | `--hud` | Show state, frame and presence in the corner. |
-| `--fast-input` | PC testing only: shortens the absence debounce and cooldown so arrivals can be repeated quickly. Kiosk settings are unchanged. |
-| `--sensor keyboard\|scripted` | Where presence comes from. `keyboard` (default) is SPACE/T; `scripted` replays random visits for unattended soak tests. `gpio` comes with the sensor wiring (Phase 1). |
+| `--fast-input` | Someone counts as gone 0.2 s after the sensor stops seeing them, and a new arrival counts once nobody has been there for 1.5 s (like the prototype's re-arm). Overrides `absence_off_s` and `cooldown_s` in `player/config.toml`. `deploy/run-pi.sh` turns it on. Arrivals during a yawn are always ignored. |
+| `--sensor keyboard\|scripted\|hmmd\|gpio` | Where presence comes from. `keyboard` (default) is SPACE/T; `scripted` replays random visits for unattended soak tests; `hmmd` is the real mmWave sensor on the Pi (distance zone and serial port in `player/config.toml`, wiring in [docs/wiring.md](docs/wiring.md)); `gpio` is a plain on/off sensor output (unused fallback). |
 | `--seed <n>` | Visit schedule for `--sensor scripted` (default 7). |
 | `--frames auto\|surfaces\|jpeg` | How frames are kept in RAM. `surfaces` is fastest (just blitting); `jpeg` uses ~20× less memory and decodes one frame ahead in a worker thread. `auto` (default) picks `jpeg` only when Surfaces would exceed 60% of available RAM. |
 | `--config <path>` | Use a different settings file (default `player/config.toml`). |
@@ -66,6 +66,21 @@ Hold `SPACE` or press `T` to simulate someone arriving. Press `Q` or `Esc` to qu
 For a soak test: `.venv/bin/python -m player.main --sensor scripted` and watch the log for `behind schedule` warnings.
 
 Behaviour and debounce settings are in [player/config.toml](player/config.toml).
+
+## Run on the Raspberry Pi
+
+1. Get the repo onto the Pi, e.g. `git clone`. `build/` is gitignored, so copy the analysis output from the PC's repo root:
+   ```sh
+   rsync -av build/manifest.json build/clips <user>@<pi-host>:<repo-on-pi>/build/
+   ```
+2. Wire the sensor and set up the serial port once: [docs/wiring.md](docs/wiring.md).
+3. On the Pi, from the repo:
+   ```sh
+   deploy/run-pi.sh sensor-test   # live sensor readings, to check wiring
+   deploy/run-pi.sh               # the kiosk: fullscreen, HMMD sensor
+   ```
+
+`deploy/run-pi.sh` installs any missing apt packages (`python3-pygame`, `python3-serial`, `ffmpeg`; asks for sudo only then). It checks the serial port, its permissions and the video files, and picks the display driver: desktop session, or KMS/DRM on OS Lite. It never edits boot configuration; if the serial port isn't set up, it prints the steps. The player runs with `--sensor hmmd --fast-input`. Extra arguments go to the player, e.g. `deploy/run-pi.sh --hud` or `deploy/run-pi.sh --sensor keyboard`. `deploy/run-pi.sh check` only installs and checks.
 
 ## Scripts
 
@@ -91,7 +106,14 @@ Behaviour and debounce settings are in [player/config.toml](player/config.toml).
 |---|---|
 | `player/main.py` | Run the fullscreen or windowed player. |
 | `player/state_machine.py` | Control idle, entering, yawning, and exiting states. |
-| `player/sensor.py` | Keyboard and scripted sensors, and debouncing (GPIO sensor comes with Phase 1). |
+| `player/sensor.py` | Sensor interface, debouncing, and GPIO, keyboard and scripted sensors. |
+| `player/hmmd.py` | Waveshare HMMD mmWave sensor over UART: frame parser, distance zone, background reader. |
+
+### Tools
+
+| Script | Purpose |
+|---|---|
+| `tools/sensor_test.py` | Pi only: `python3 -m tools.sensor_test` prints live presence, distance and zone readings, for wiring bring-up. See [docs/wiring.md](docs/wiring.md). |
 | `player/frames.py` | Load the manifest and keep frames in RAM (Surfaces, or JPEG with decode-ahead). |
 | `player/settings.py` | Load `player/config.toml`. |
 

@@ -1,9 +1,11 @@
 """Yawn kiosk player: the idle loop, yawning when someone arrives.
 
-    python -m player.main [--windowed] [--hud] [--sensor keyboard|scripted] [--frames auto|surfaces|jpeg]
+    python -m player.main [--windowed] [--hud] [--sensor keyboard|scripted|hmmd|gpio] [--frames auto|surfaces|jpeg]
 
 keyboard (default): hold SPACE while someone is "present", or press T to toggle presence.
 scripted: random visits (repeatable with --seed) for unattended soak tests.
+hmmd: the Waveshare HMMD mmWave sensor over UART, settings in config.toml [sensor] (Pi only).
+gpio: a plain on/off sensor output on [sensor] gpio_pin (Pi only).
 Q or Esc quits.
 """
 
@@ -17,16 +19,19 @@ from pathlib import Path
 import pygame
 
 from player.frames import FRAME_MODES, FrameMode, FrameStore, load_frames, load_manifest
-from player.sensor import Debouncer, KeyboardSensor, ScriptedSensor, Sensor, random_visits, visit_events
+from player.hmmd import HmmdSensor, pyserial_opener
+from player.sensor import Debouncer, GpioSensor, KeyboardSensor, ScriptedSensor, Sensor, random_visits, visit_events
 from player.settings import DEFAULT_CONFIG, SensorSettings, Settings, load_settings
 from player.state_machine import Behaviour, Graph, YawnStateMachine
 
 log = logging.getLogger("player")
 
-SENSORS = ("keyboard", "scripted")
+SENSORS = ("keyboard", "scripted", "hmmd", "gpio")
 DEFAULT_SEED = 7
 SCRIPTED_HOURS = 24  # length of the scripted visit schedule; long enough for any soak test
 SECONDS_PER_HOUR = 3600
+FAST_ABSENCE_OFF_S = 0.2
+FAST_COOLDOWN_S = 1.5  # zone must stay empty this long before a new arrival counts (prototype's re-arm time)
 WINDOW_SCREEN_FRACTION = 0.9
 QUIT_KEYS = {"q", "escape"}
 BLACK = (0, 0, 0)
@@ -85,6 +90,14 @@ def make_sensor(kind: str, seed: int, sensor_settings: SensorSettings, behaviour
     if kind == "keyboard":
         log.info("sensor: keyboard; hold SPACE (or press T) for 'someone present'")
         return KeyboardSensor()
+    if kind == "hmmd":
+        log.info("sensor: HMMD mmWave on %s, zone %d-%d cm (clears at %d cm)", sensor_settings.serial_device,
+                 sensor_settings.min_cm, sensor_settings.max_cm, sensor_settings.rearm_cm)
+        return HmmdSensor(pyserial_opener(sensor_settings.serial_device, sensor_settings.baud), sensor_settings.zone())
+    if kind == "gpio":
+        log.info("sensor: GPIO%d (BCM); some sensors need up to a minute after power-on before readings are reliable",
+                 sensor_settings.gpio_pin)
+        return GpioSensor(sensor_settings.gpio_pin)
     seconds = SCRIPTED_HOURS * SECONDS_PER_HOUR
     visits = random_visits(seconds, seed, sensor_settings.absence_off_s, behaviour.cooldown_s)
     log.info("sensor: scripted, %d visits over %d h (seed %d)", len(visits), SCRIPTED_HOURS, seed)
@@ -105,16 +118,20 @@ def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool, sensor_
     frames = load_frames(manifest, settings.manifest.parent, size, frame_mode)
     try:
         if fast_input:
-            sensor_settings = replace(settings.sensor, absence_off_s=0.2)
-            behaviour = replace(settings.behaviour, cooldown_s=0.0)
-            log.info("fast input enabled: arrivals can be repeated after 0.2 s away")
+            sensor_settings = replace(settings.sensor, absence_off_s=FAST_ABSENCE_OFF_S)
+            behaviour = replace(settings.behaviour, cooldown_s=FAST_COOLDOWN_S)
+            log.info("fast input: gone after %.1f s, new arrival counts after %.1f s empty",
+                     FAST_ABSENCE_OFF_S, FAST_COOLDOWN_S)
         else:
             sensor_settings = settings.sensor
             behaviour = settings.behaviour
         sensor = make_sensor(sensor_kind, seed, sensor_settings, behaviour)
-        log.info("ready in %.1f s; Q to quit", time.perf_counter() - started)
-        debouncer = Debouncer(sensor_settings.presence_on_s, sensor_settings.absence_off_s)
-        _play(screen, offset, frames, fps, sensor, debouncer, YawnStateMachine(graph, behaviour), hud)
+        try:
+            log.info("ready in %.1f s; Q to quit", time.perf_counter() - started)
+            debouncer = Debouncer(sensor_settings.presence_on_s, sensor_settings.absence_off_s)
+            _play(screen, offset, frames, fps, sensor, debouncer, YawnStateMachine(graph, behaviour), hud)
+        finally:
+            sensor.close()
     finally:
         frames.close()
 
@@ -169,7 +186,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--windowed", action="store_true", help="run in a window instead of fullscreen")
     parser.add_argument("--hud", action="store_true", help="show state, frame and presence in the corner")
-    parser.add_argument("--fast-input", action="store_true", help="shorten PC absence debounce and cooldown for repeated tests")
+    parser.add_argument("--fast-input", action="store_true", help="gone after 0.2 s; a new arrival counts once nobody was there for 1.5 s")
     parser.add_argument("--sensor", choices=SENSORS, default="keyboard", help="where presence comes from")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="visit schedule for --sensor scripted")
     parser.add_argument("--frames", choices=FRAME_MODES, default="auto",

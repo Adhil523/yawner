@@ -143,7 +143,8 @@ class YawnStateMachine:
         behaviour = self._behaviour
         if present and not self._present:
             cooled_down = self._left_at is None or now - self._left_at >= behaviour.cooldown_s
-            if cooled_down and behaviour.yawn_on_arrival:
+            # Only arrivals while idle count; someone arriving mid-yawn doesn't queue another one.
+            if cooled_down and behaviour.yawn_on_arrival and self.phase is Phase.IDLE:
                 self.armed = True
             self._last_trigger = now
         elif not present and self._present:
