@@ -69,10 +69,11 @@ Behaviour and debounce settings are in [player/config.toml](player/config.toml).
 
 ## Run on the Raspberry Pi
 
-1. Get the repo onto the Pi, e.g. `git clone`. `build/` is gitignored, so copy the analysis output from the PC's repo root:
+1. Get the repo onto the Pi, e.g. `git clone`. That includes `build/manifest.json`. The video clips aren't in git (~90 MB), so copy them from the PC's repo root:
    ```sh
-   rsync -av build/manifest.json build/clips <user>@<pi-host>:<repo-on-pi>/build/
+   rsync -av build/clips <user>@<pi-host>:<repo-on-pi>/build/
    ```
+   **After every re-analysis, commit the new manifest and re-copy the clips.** The manifest's cut points are frame numbers in those exact clips, so a new manifest with old clips (or the reverse) gives visible jumps.
 2. Wire the sensor and set up the serial port once: [docs/wiring.md](docs/wiring.md).
 3. On the Pi, from the repo:
    ```sh

@@ -86,8 +86,8 @@ fi
 # --- Video assets -----------------------------------------------------------
 if [[ "$command" != "sensor-test" ]]; then
   if [[ ! -f build/manifest.json || ! -d build/clips ]]; then
-    fail "build/manifest.json or build/clips/ is missing. The analysis runs on the PC; copy its output over, e.g. from the PC's repo root:
-  rsync -av build/manifest.json build/clips <user>@<pi-host>:$repo_dir/build/"
+    fail "build/manifest.json or build/clips/ is missing. The manifest comes with git (git pull); the clips are copied from the PC's repo root:
+  rsync -av build/clips <user>@<pi-host>:$repo_dir/build/"
   fi
   info "video: build/manifest.json and build/clips/ found"
 fi

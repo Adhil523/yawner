@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "clip": "build/normalized/Man_yawning_on_white_background_202609071453.mkv",
+  "frame_rate": "24/1",
+  "fps": 24.0,
+  "resolution": [
+    720,
+    1280
+  ],
+  "crossfade_frames": 8,
+  "natural_drift": 1.3078,
+  "sequences": {
+    "main": {
+      "file": "clips/main.mkv",
+      "frames": 240
+    },
+    "bridge_loop": {
+      "file": "clips/bridge_loop.mkv",
+      "frames": 8
+    },
+    "bridge_entry_0": {
+      "file": "clips/bridge_entry_0.mkv",
+      "frames": 8
+    }
+  },
+  "idle_loop": {
+    "start": 219,
+    "end": 239,
+    "cost": 0.9081,
+    "jump": {
+      "at": 231,
+      "bridge": "bridge_loop",
+      "resume": 219
+    }
+  },
+  "yawn": {
+    "start": 36,
+    "end": 210
+  },
+  "entries": [
+    {
+      "at": 231,
+      "resume": 36,
+      "bridge": "bridge_entry_0",
+      "cost": 4.1533,
+      "latency_s": 0.333
+    }
+  ],
+  "exits": [
+    {
+      "at": 218,
+      "resume": 219,
+      "bridge": null,
+      "cost": 0.0
+    }
+  ],
+  "worst_entry_latency_s": 1.208,
+  "flags": [
+    "entry cut 239 -> 36 costs 3.2x natural drift; review its jump sheet"
+  ]
+}
