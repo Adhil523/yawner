@@ -1,4 +1,4 @@
-from player.sensor import Debouncer, KeyboardSensor, ScriptedSensor
+from player.sensor import Debouncer, KeyboardSensor, ScriptedSensor, random_visits, visit_events
 
 
 def test_presence_needs_signal_held_for_on_time() -> None:
@@ -42,3 +42,16 @@ def test_keyboard_sensor_hold_and_toggle() -> None:
     assert sensor.raw(0.0) is True
     sensor.handle_key("t", True)
     assert sensor.raw(0.0) is False
+
+
+def test_random_visits_are_repeatable_and_spaced_past_debounce_and_cooldown() -> None:
+    visits = random_visits(600.0, seed=3, absence_off_s=5.0, cooldown_s=5.0)
+    assert visits == random_visits(600.0, seed=3, absence_off_s=5.0, cooldown_s=5.0)
+    assert len(visits) > 5
+    for (_, leave), (next_arrive, _) in zip(visits, visits[1:]):
+        assert next_arrive - leave >= 10.0
+
+
+def test_visit_events_drive_scripted_sensor() -> None:
+    sensor = ScriptedSensor(visit_events([(2.0, 4.0), (10.0, 12.0)]))
+    assert [sensor.raw(t) for t in (1.0, 2.0, 3.9, 4.0, 11.0, 13.0)] == [False, True, True, False, True, False]

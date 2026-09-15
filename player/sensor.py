@@ -6,6 +6,17 @@ wiring work (brief Phase 1).
 """
 
 import bisect
+import random
+from typing import Protocol
+
+FIRST_ARRIVAL_S = 2.0
+VISIT_LENGTH_S = (1.0, 6.0)
+GAP_EXTRA_S = (0.5, 4.0)
+LAST_YAWN_ROOM_S = 12.0  # no arrivals this close to the end, so the last yawn can finish
+
+
+class Sensor(Protocol):
+    def raw(self, now: float) -> bool: ...
 
 
 class Debouncer:
@@ -40,6 +51,24 @@ class ScriptedSensor:
     def raw(self, now: float) -> bool:
         index = bisect.bisect_right(self._times, now) - 1
         return index >= 0 and self._events[index][1]
+
+
+def random_visits(seconds: float, seed: int, absence_off_s: float, cooldown_s: float) -> list[tuple[float, float]]:
+    """(arrive, leave) times, spaced so every visit gets past debounce and cooldown."""
+    rng = random.Random(seed)
+    visits: list[tuple[float, float]] = []
+    arrive = FIRST_ARRIVAL_S
+    while True:
+        leave = arrive + rng.uniform(*VISIT_LENGTH_S)
+        if leave > seconds - LAST_YAWN_ROOM_S:
+            return visits
+        visits.append((round(arrive, 2), round(leave, 2)))
+        arrive = leave + absence_off_s + cooldown_s + rng.uniform(*GAP_EXTRA_S)
+
+
+def visit_events(visits: list[tuple[float, float]]) -> list[tuple[float, bool]]:
+    """ScriptedSensor events for (arrive, leave) visits."""
+    return [(0.0, False)] + [event for arrive, leave in visits for event in ((arrive, True), (leave, False))]
 
 
 class KeyboardSensor:

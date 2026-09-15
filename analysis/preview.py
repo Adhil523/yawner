@@ -5,14 +5,13 @@
 Drives the real player state machine (player/state_machine.py) with a scripted
 sensor, using the kiosk's own debounce and behaviour settings from
 player/config.toml, and renders what the screen would show to
-build/preview/preview.mp4. Also draws a close-up sheet for every crossfade and
+assets/preview/preview.mp4. Also draws a close-up sheet for every crossfade and
 writes build/preview/preview.json for the report.
 """
 
 import argparse
 import json
 import logging
-import random
 import sys
 from typing import Any
 
@@ -24,7 +23,7 @@ from analysis.cli import repo_relative, setup_logging
 from analysis.features import scaled_size
 from analysis.video_io import H264_ARGS, VideoToolError, VideoWriter, read_frames
 from analysis.visuals import BGR, contact_sheet, difference_strip, label, rgb_to_bgr, save_png, stack_vertical
-from player.sensor import Debouncer, ScriptedSensor
+from player.sensor import Debouncer, ScriptedSensor, random_visits, visit_events
 from player.settings import load_settings
 from player.state_machine import MAIN, Graph, Jump, Phase, YawnStateMachine
 
@@ -37,19 +36,6 @@ DIFF_LONG_SIDE = 640
 DIFF_GAIN = 8.0
 MAIN_COLOR: BGR = (130, 130, 130)
 BRIDGE_COLOR: BGR = (0, 170, 255)
-
-
-def random_visits(seconds: float, seed: int, absence_off_s: float, cooldown_s: float) -> list[tuple[float, float]]:
-    """(arrive, leave) times, spaced so every visit gets past debounce and cooldown."""
-    rng = random.Random(seed)
-    visits: list[tuple[float, float]] = []
-    arrive = 2.0
-    while True:
-        leave = arrive + rng.uniform(1.0, 6.0)
-        if leave > seconds - 12.0:  # leave room for the last yawn to finish
-            return visits
-        visits.append((round(arrive, 2), round(leave, 2)))
-        arrive = leave + absence_off_s + cooldown_s + rng.uniform(0.5, 4.0)
 
 
 def load_sequences(manifest: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -108,8 +94,7 @@ def run(seconds: float = config.PREVIEW_SECONDS, seed: int = config.PREVIEW_SEED
     sequences = load_sequences(manifest)
 
     visits = random_visits(seconds, seed, settings.sensor.absence_off_s, settings.behaviour.cooldown_s)
-    events = [(0.0, False)] + [event for arrive, leave in visits for event in ((arrive, True), (leave, False))]
-    sensor = ScriptedSensor(events)
+    sensor = ScriptedSensor(visit_events(visits))
     debouncer = Debouncer(settings.sensor.presence_on_s, settings.sensor.absence_off_s)
     machine = YawnStateMachine(graph, settings.behaviour)
 

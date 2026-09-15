@@ -1,9 +1,10 @@
 """Yawn kiosk player: the idle loop, yawning when someone arrives.
 
-    python -m player.main [--windowed] [--hud] [--config player/config.toml]
+    python -m player.main [--windowed] [--hud] [--sensor keyboard|scripted] [--frames auto|surfaces|jpeg]
 
-On the PC the keyboard is the sensor: hold SPACE while someone is "present",
-or press T to toggle presence. Q or Esc quits.
+keyboard (default): hold SPACE while someone is "present", or press T to toggle presence.
+scripted: random visits (repeatable with --seed) for unattended soak tests.
+Q or Esc quits.
 """
 
 import argparse
@@ -15,13 +16,17 @@ from pathlib import Path
 
 import pygame
 
-from player.frames import load_manifest, load_sequences
-from player.sensor import Debouncer, KeyboardSensor
-from player.settings import DEFAULT_CONFIG, Settings, load_settings
-from player.state_machine import Graph, YawnStateMachine
+from player.frames import FRAME_MODES, FrameMode, FrameStore, load_frames, load_manifest
+from player.sensor import Debouncer, KeyboardSensor, ScriptedSensor, Sensor, random_visits, visit_events
+from player.settings import DEFAULT_CONFIG, SensorSettings, Settings, load_settings
+from player.state_machine import Behaviour, Graph, YawnStateMachine
 
 log = logging.getLogger("player")
 
+SENSORS = ("keyboard", "scripted")
+DEFAULT_SEED = 7
+SCRIPTED_HOURS = 24  # length of the scripted visit schedule; long enough for any soak test
+SECONDS_PER_HOUR = 3600
 WINDOW_SCREEN_FRACTION = 0.9
 QUIT_KEYS = {"q", "escape"}
 BLACK = (0, 0, 0)
@@ -76,7 +81,18 @@ def _advance(machine: YawnStateMachine, present: bool, now: float) -> None:
         log.info("%s -> %s", before.value, machine.phase.value)
 
 
-def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool) -> None:
+def make_sensor(kind: str, seed: int, sensor_settings: SensorSettings, behaviour: Behaviour) -> Sensor:
+    if kind == "keyboard":
+        log.info("sensor: keyboard; hold SPACE (or press T) for 'someone present'")
+        return KeyboardSensor()
+    seconds = SCRIPTED_HOURS * SECONDS_PER_HOUR
+    visits = random_visits(seconds, seed, sensor_settings.absence_off_s, behaviour.cooldown_s)
+    log.info("sensor: scripted, %d visits over %d h (seed %d)", len(visits), SCRIPTED_HOURS, seed)
+    return ScriptedSensor(visit_events(visits))
+
+
+def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool, sensor_kind: str, seed: int,
+        frame_mode: FrameMode) -> None:
     manifest = load_manifest(settings.manifest)
     graph = Graph.from_manifest(manifest)
     fps = float(manifest["fps"])
@@ -86,24 +102,31 @@ def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool) -> None
     screen, size, offset = open_display((manifest["resolution"][0], manifest["resolution"][1]), windowed)
     screen.fill(BLACK)
     started = time.perf_counter()
-    sequences = load_sequences(manifest, settings.manifest.parent, size)
-    if fast_input:
-        sensor_settings = replace(settings.sensor, absence_off_s=0.2)
-        behaviour = replace(settings.behaviour, cooldown_s=0.0)
-        log.info("fast input enabled: arrivals can be repeated after 0.2 s away")
-    else:
-        sensor_settings = settings.sensor
-        behaviour = settings.behaviour
-    log.info("ready in %.1f s; hold SPACE (or press T) for 'someone present', Q to quit", time.perf_counter() - started)
+    frames = load_frames(manifest, settings.manifest.parent, size, frame_mode)
+    try:
+        if fast_input:
+            sensor_settings = replace(settings.sensor, absence_off_s=0.2)
+            behaviour = replace(settings.behaviour, cooldown_s=0.0)
+            log.info("fast input enabled: arrivals can be repeated after 0.2 s away")
+        else:
+            sensor_settings = settings.sensor
+            behaviour = settings.behaviour
+        sensor = make_sensor(sensor_kind, seed, sensor_settings, behaviour)
+        log.info("ready in %.1f s; Q to quit", time.perf_counter() - started)
+        debouncer = Debouncer(sensor_settings.presence_on_s, sensor_settings.absence_off_s)
+        _play(screen, offset, frames, fps, sensor, debouncer, YawnStateMachine(graph, behaviour), hud)
+    finally:
+        frames.close()
 
+
+def _play(screen: pygame.Surface, offset: tuple[int, int], frames: FrameStore, fps: float,
+          sensor: Sensor, debouncer: Debouncer, machine: YawnStateMachine, hud: bool) -> None:
     font = pygame.font.Font(None, 30) if hud else None
-    sensor = KeyboardSensor()
-    debouncer = Debouncer(sensor_settings.presence_on_s, sensor_settings.absence_off_s)
-    machine = YawnStateMachine(graph, behaviour)
     period = 1.0 / fps
-    deadline = time.perf_counter()
+    playback_start = deadline = time.perf_counter()
     present = False
     dropped = 0
+    frames.prepare(machine.current)
 
     while True:
         for event in pygame.event.get():
@@ -113,15 +136,16 @@ def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool) -> None
                 key = pygame.key.name(event.key)
                 if event.type == pygame.KEYDOWN and key in QUIT_KEYS:
                     return
-                sensor.handle_key(key, event.type == pygame.KEYDOWN)
+                if isinstance(sensor, KeyboardSensor):
+                    sensor.handle_key(key, event.type == pygame.KEYDOWN)
 
         now = time.perf_counter()
-        was_present, present = present, debouncer.update(sensor.raw(now), now)
+        was_present, present = present, debouncer.update(sensor.raw(now - playback_start), now)
         if present != was_present:
             log.info("presence: %s", "someone there" if present else "nobody")
 
         name, index = machine.current
-        screen.blit(sequences[name][index], offset)
+        screen.blit(frames.get(machine.current), offset)
         if font is not None:
             status = f"{machine.phase.value}  {name}:{index}  present={'yes' if present else 'no'}"
             _draw_hud(screen, font, status + ("  armed" if machine.armed else ""), offset)
@@ -137,6 +161,7 @@ def run(settings: Settings, windowed: bool, hud: bool, fast_input: bool) -> None
             deadline += missed * period
             dropped += missed
             log.warning("behind schedule, skipped %d frame(s) (%d total)", missed, dropped)
+        frames.prepare(machine.current)
         _sleep_until(deadline)
 
 
@@ -145,11 +170,15 @@ def main() -> None:
     parser.add_argument("--windowed", action="store_true", help="run in a window instead of fullscreen")
     parser.add_argument("--hud", action="store_true", help="show state, frame and presence in the corner")
     parser.add_argument("--fast-input", action="store_true", help="shorten PC absence debounce and cooldown for repeated tests")
+    parser.add_argument("--sensor", choices=SENSORS, default="keyboard", help="where presence comes from")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="visit schedule for --sensor scripted")
+    parser.add_argument("--frames", choices=FRAME_MODES, default="auto",
+                        help="keep frames as Surfaces or JPEG bytes; auto picks by available RAM")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="[%(name)s]: %(message)s")
     try:
-        run(load_settings(args.config), args.windowed, args.hud, args.fast_input)
+        run(load_settings(args.config), args.windowed, args.hud, args.fast_input, args.sensor, args.seed, args.frames)
     except (ValueError, FileNotFoundError, RuntimeError) as error:
         log.error("%s", error)
         sys.exit(1)
